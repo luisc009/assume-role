@@ -83,7 +83,7 @@ $(basename $0) <command>
 Commands:
 add <profile>       Adds/Update a profile
 remove <profile>    Removes the profile
-login [<profile>]   Login into Okta and gets the AWS Sessions
+login <profile>   Login into Okta and gets the AWS Sessions
 list                List all the profiles
 logout              Invalidate active sessions
 
