@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+
+exec_path="$( cd "$(dirname "$0")" ; pwd -P )"
+me=$(basename "$0")
+ar_path=${HOME}/.assume_role/
+okta_config=${HOME}/.okta/config.properties
+
+command -v withokta > /dev/null 2>&1 || { echo 'ERROR: Okta AWS CLI Assume Role tool is not installed'; exit 1; }
+
+function _ask-continue { 
+    read -p 'Continue? (y/n) ' -n 1 -r && echo
+     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        [[ "$0" = "$BASH_SOURCE" ]] && exit 1
+     fi
+}
+
+function _switch {
+    [[ ! -f "$ar_path/$1" ]] && { echo "ERROR: Profile $1 does not exists"; exit 1; }
+    profile=$(head -n 1 $okta_config | tr -d "[:punct:]\n")
+    cp "$okta_config" "$ar_path/$profile"
+    cp "$ar_path""$1" "$okta_config"
+    echo "$profile" > "$ar_path".last && echo "$1" > "$ar_path".current 
+}
+
+function list {
+    find "$ar_path" -type f  -and \( -not -name ".*" \) -exec basename {} \;
+}
+
+function add {
+    name="$1"
+    last=$(cat "$ar_path".last)
+    if [[ -f "$ar_path""$name" ]] || [[ "$name" == "$last" ]]; then 
+        echo "WARNING: This will overwrite role $name"
+        _ask-continue
+    fi
+    
+    read -rp "OKTA_ORG (wizeline.okta.com): " OKTA_ORG
+    read -rp "OKTA_AWS_APP_URL: " OKTA_AWS_APP_URL
+    read -rp "AWS_REGION (us-west-2): " AWS_REGION
+    read -rp "AWS_OUTPUT (json): " AWS_OUTPUT
+    
+    [[ -z "$OKTA_AWS_APP_URL" ]] && echo "ERROR: AWS APP URL is invalid" && exit 1
+
+    echo -e "#$name
+        OKTA_ORG=${OKTA_ORG:-wizeline.okta.com}
+        OKTA_AWS_APP_URL=$OKTA_AWS_APP_URL
+        OKTA_PROFILE=$name
+        OKTA_BROWSER_AUTH=true
+    " | tr -s ' ' > "${ar_path}${name}"
+    
+    aws configure set region "${AWS_REGION:-us-west-2}" --profile "$name"
+    aws configure set output "${AWS_OUTPUT:-json}" --profile "$name"
+}
+
+function remove {
+  current=$(cat "$ar_path".current)
+  [[ $1 == "$current" ]] && { echo "ERROR: Profile $1 is being used by Okta AWS Cli, please login with any other profile before removing it"; exit 1; }
+  [[ -f "$ar_path""$1" ]] && rm "$ar_path""$1" || echo "ERROR: Profile $1 not found"
+}
+
+function login {
+    [[ $1 == "" ]] && PROFILE=$(cat "$ar_path".last) || PROFILE=$1
+    _switch $PROFILE
+    withokta "aws --profile $PROFILE" "$PROFILE" sts get-caller-identity
+}
+
+function logout {
+    withokta logout
+}
+
+function install {
+    [[ ! -d "$ar_path" ]] && mkdir "$ar_path"
+    [[ ! -f "/usr/local/bin/$me" ]] && cp "$exec_path"/"$me" "/usr/local/bin/$me"
+}
+
+function usage {
+cat <<EOF
+$(basename $0) helps to manage AWS sessions between Okta and account and AWS account. 
+
+Usage:
+$(basename $0) <command> 
+
+Commands:
+add <profile>       Adds/Update a profile
+remove <profile>    Removes the profile
+login [<profile>]   Login into Okta and gets the AWS Sessions
+list                List all the profiles
+logout              Invalidate active sessions
+
+EOF
+}
+
+[[ "$1" == "" ]] && { usage; exit 1; }
+case $1 in
+    add|remove|login) [[ "$2" == "" ]] && usage || "$1" "$2"
+        ;;
+    list|logout|install) "$1"
+        ;;
+    *) usage
+        ;;
+esac
